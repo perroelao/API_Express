@@ -1,4 +1,4 @@
-# API_EXPRESS - Ferretería
+# API_EXPRESS - Ferremas
 
 API RESTful para la gestión de productos, carritos de compra y operaciones CRUD en una ferretería, desarrollada con Node.js, Express y OracleDB.
 
@@ -29,4 +29,5 @@ API RESTful para la gestión de productos, carritos de compra y operaciones CRUD
 Puedes usar Thunder Client o REST Client en VS Code para probar los endpoints.
 
 **AUTOR**
+
 Jose Cisterna
