@@ -5,7 +5,7 @@ const oracledb = require('oracledb')
 const dbconfig = {
     user: 'FERREMAS',
     password: 'FERREMAS',
-    connectString: 'localhost:1521/orcl'
+    connectString: 'localhost:1521/orcl.duoc.com.cl'
 }
 const carritos = {}
 
@@ -163,19 +163,29 @@ app.delete('/del_productos/:id', async (req, res) => {
 // Crear un pedido
 app.post('/crear_pedido', async (req, res) => {
     let cone
-    const { cliente_id, estado_id, sucursal_retiro, vendedor_id, productos } = req.body
-    if (!cliente_id || !estado_id || !vendedor_id || !Array.isArray(productos) || productos.length === 0) {
+    const { cliente_id, sucursal_retiro, vendedor_id, productos, metodo_pago_id } = req.body
+    if (!cliente_id || !vendedor_id || !Array.isArray(productos) || productos.length === 0 || !metodo_pago_id) {
         return res.status(400).json({ error: "Datos incompletos" })
     }
     // Calcular el total sumando cantidad * precio_unit de cada producto
     const total = productos.reduce((acc, prod) => acc + (prod.cantidad * prod.precio_unit), 0)
     try {
         cone = await oracledb.getConnection(dbconfig)
+
+        // Buscar estado_id para "Pendiente"
+        const estadoResult = await cone.execute(
+            "SELECT estado_id FROM ESTADO WHERE LOWER(nombre) = 'pendiente'"
+        )
+        if (estadoResult.rows.length === 0) {
+            return res.status(500).json({ error: "No existe estado 'Pendiente'" })
+        }
+        const estado_id = estadoResult.rows[0][0]
+
         // Obtener nuevo pedido_id
         const pedidoResult = await cone.execute("SELECT PEDIDO_SEQ.NEXTVAL FROM dual")
         const pedido_id = pedidoResult.rows[0][0]
 
-        // Insertar en PEDIDO
+        // Insertar en PEDIDO con estado "Pendiente"
         await cone.execute(
             `INSERT INTO PEDIDO (pedido_id, cliente_id, fecha_pedido, estado_id, sucursal_retiro, total, vendedor_id)
              VALUES (:pedido_id, :cliente_id, SYSDATE, :estado_id, :sucursal_retiro, :total, :vendedor_id)`,
@@ -199,8 +209,27 @@ app.post('/crear_pedido', async (req, res) => {
             )
         }
 
+        // Determinar estado_pago_id según método de pago
+        let estado_pago_id = (metodo_pago_id == 4) ? 2 : 1 // 4=Transferencia, 2=Pendiente, 1=Pagado
+
+        // Obtener nuevo pago_id
+        const pagoResult = await cone.execute("SELECT NVL(MAX(pago_id),0)+1 FROM PAGO")
+        const pago_id = pagoResult.rows[0][0]
+
+        await cone.execute(
+            `INSERT INTO PAGO (pago_id, pedido_id, metodo_pago_id, monto, estado_pago_id)
+             VALUES (:pago_id, :pedido_id, :metodo_pago_id, :monto, :estado_pago_id)`,
+            {
+                pago_id,
+                pedido_id,
+                metodo_pago_id,
+                monto: total,
+                estado_pago_id
+            }
+        )
+
         await cone.commit()
-        res.status(201).json({ mensaje: "Pedido creado", pedido_id, total })
+        res.status(201).json({ mensaje: "Pedido y pago creados", pedido_id, pago_id, total, estado_pago_id })
     } catch (ex) {
         res.status(500).json({ error: ex.message })
     } finally {
