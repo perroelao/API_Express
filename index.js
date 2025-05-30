@@ -1,4 +1,5 @@
 //import de librerias 
+const cors = require('cors')
 const express = require('express')
 const puerto = 3002
 const oracledb = require('oracledb')
@@ -14,6 +15,7 @@ const app = express()
 
 //middleware
 app.use(express.json())
+app.use(cors())
 
 //endpoints (CRUD)
 
@@ -45,7 +47,12 @@ app.get('/productos/:id', async (req, res) => {
     try {
         cone = await oracledb.getConnection(dbconfig)
         const result = await cone.execute(
-            "SELECT * FROM PRODUCTO WHERE producto_id = :id",
+            `SELECT p.producto_id, p.nombre, p.descripcion, p.precio, 
+                    c.nombre AS categoria, m.nombre AS marca, p.imagen
+             FROM PRODUCTO p
+             JOIN CATEGORIA c ON p.categoria_id = c.categoria_id
+             JOIN MARCA m ON p.marca_id = m.marca_id
+             WHERE p.producto_id = :id`,
             [req.params.id]
         )
         if (result.rows.length === 0) {
@@ -57,8 +64,8 @@ app.get('/productos/:id', async (req, res) => {
             nombre: row[1],
             descripcion: row[2],
             precio: row[3],
-            categoria_id: row[4],
-            marca_id: row[5],
+            categoria: row[4],
+            marca: row[5],
             imagen: row[6]
         })
     } catch (ex) {
@@ -161,14 +168,18 @@ app.delete('/del_productos/:id', async (req, res) => {
 // endpoint para crear pedidos
 
 // Crear un pedido
+// Crear un pedido
 app.post('/crear_pedido', async (req, res) => {
     let cone
-    const { cliente_id, sucursal_retiro, vendedor_id, productos, metodo_pago_id } = req.body
+    // Ahora recibimos también el campo total (opcional)
+    const { cliente_id, sucursal_retiro, vendedor_id, productos, metodo_pago_id, total } = req.body
     if (!cliente_id || !vendedor_id || !Array.isArray(productos) || productos.length === 0 || !metodo_pago_id) {
         return res.status(400).json({ error: "Datos incompletos" })
     }
-    // Calcular el total sumando cantidad * precio_unit de cada producto
-    const total = productos.reduce((acc, prod) => acc + (prod.cantidad * prod.precio_unit), 0)
+    // Usa el total enviado por el frontend (con descuento si corresponde), si no viene lo calcula
+    const totalPedido = (typeof total === "number" && !isNaN(total)) 
+        ? total 
+        : productos.reduce((acc, prod) => acc + (prod.cantidad * prod.precio_unit), 0)
     try {
         cone = await oracledb.getConnection(dbconfig)
 
@@ -189,7 +200,7 @@ app.post('/crear_pedido', async (req, res) => {
         await cone.execute(
             `INSERT INTO PEDIDO (pedido_id, cliente_id, fecha_pedido, estado_id, sucursal_retiro, total, vendedor_id)
              VALUES (:pedido_id, :cliente_id, SYSDATE, :estado_id, :sucursal_retiro, :total, :vendedor_id)`,
-            { pedido_id, cliente_id, estado_id, sucursal_retiro, total, vendedor_id }
+            { pedido_id, cliente_id, estado_id, sucursal_retiro, total: totalPedido, vendedor_id }
         )
 
         // Insertar productos en DETALLE_PEDIDO
@@ -210,7 +221,16 @@ app.post('/crear_pedido', async (req, res) => {
         }
 
         // Determinar estado_pago_id según método de pago
-        let estado_pago_id = (metodo_pago_id == 4) ? 2 : 1 // 4=Transferencia, 2=Pendiente, 1=Pagado
+        // 1: Efectivo, 2: Débito, 3: Crédito => Pagado (1)
+        // 4: Transferencia => Pendiente (2)
+        let estado_pago_id
+        if (Number(metodo_pago_id) === 4) {
+            estado_pago_id = 2 // Transferencia: Pendiente
+        } else if ([1, 2, 3].includes(Number(metodo_pago_id))) {
+            estado_pago_id = 1 // Efectivo, Débito, Crédito: Pagado
+        } else {
+            estado_pago_id = 2 // Por defecto, Pendiente
+        }
 
         // Obtener nuevo pago_id
         const pagoResult = await cone.execute("SELECT NVL(MAX(pago_id),0)+1 FROM PAGO")
@@ -223,13 +243,13 @@ app.post('/crear_pedido', async (req, res) => {
                 pago_id,
                 pedido_id,
                 metodo_pago_id,
-                monto: total,
+                monto: totalPedido,
                 estado_pago_id
             }
         )
 
         await cone.commit()
-        res.status(201).json({ mensaje: "Pedido y pago creados", pedido_id, pago_id, total, estado_pago_id })
+        res.status(201).json({ mensaje: "Pedido y pago creados", pedido_id, pago_id, total: totalPedido, estado_pago_id })
     } catch (ex) {
         res.status(500).json({ error: ex.message })
     } finally {
