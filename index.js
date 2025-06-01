@@ -6,7 +6,7 @@ const oracledb = require('oracledb')
 const dbconfig = {
     user: 'FERREMAS',
     password: 'FERREMAS',
-    connectString: 'localhost:1521/orcl'
+    connectString: 'localhost:1521/orcl.duoc.com.cl'
 }
 const carritos = {}
 
